@@ -14,7 +14,9 @@ data class AutoReplyLog(
     val id: Long = 0,
     val senderNumber: String,
     val repliedAt: Long,
-    val replyText: String
+    val replyText: String,
+    // Why Junkboy decided to reply, so decisions can be audited
+    val reason: String = ""
 )
 
 @Dao

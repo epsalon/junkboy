@@ -39,9 +39,10 @@ class AutoReplyEngineTest {
 
     @Test
     fun sendsOnceAndLogs() = runBlocking {
-        assertTrue(engine.sendStopReply("12345"))
+        assertTrue(engine.sendStopReply("12345", "Judged SPAM"))
         assertEquals(listOf("12345" to "STOP"), sent)
         assertEquals(1, dao.rows.size)
+        assertEquals("Judged SPAM", dao.rows[0].reason)
     }
 
     @Test

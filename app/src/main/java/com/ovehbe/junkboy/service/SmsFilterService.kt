@@ -15,6 +15,8 @@ import com.ovehbe.junkboy.filters.ContentAllowlist
 import com.ovehbe.junkboy.filters.CustomFilter
 import com.ovehbe.junkboy.filters.FilterResult
 import com.ovehbe.junkboy.filters.Stop2EndDetector
+import com.ovehbe.junkboy.filters.Stop2EndPolicy
+import com.ovehbe.junkboy.llm.OpenRouterJudge
 import com.ovehbe.junkboy.utils.AutoReplyEngine
 import com.ovehbe.junkboy.utils.SenderHistoryChecker
 import com.ovehbe.junkboy.utils.PreferencesManager
@@ -254,7 +256,7 @@ class SmsFilterService : Service() {
                 // Stop2End: a closing "Reply STOP" directive marks marketing spam (stored silently);
                 // a "STOP2END" elsewhere only triggers the reply if the message is independently spam
                 val stop2End = evaluateStop2End(sender, message, filterResult)
-                val isStop2End = stop2End == Stop2EndAction.SUPPRESS_AND_REPLY
+                val isStop2End = stop2End.action == Stop2EndPolicy.Action.SUPPRESS_AND_REPLY
                 if (isStop2End) {
                     filterResult = filterResult.copy(
                         isBlocked = true,
@@ -282,7 +284,7 @@ class SmsFilterService : Service() {
                 
                 if (isStop2End) {
                     Log.i(TAG, "Stop2End spam from $sender stored silently")
-                    autoReplyEngine.sendStopReply(sender)
+                    autoReplyEngine.sendStopReply(sender, stop2End.reason)
                 } else {
                     // Show notification - NotificationHelper now handles all category-specific logic
                     notificationHelper.showSmsNotification(
@@ -293,8 +295,8 @@ class SmsFilterService : Service() {
                     // Detect and copy OTP if present (works regardless of category)
                     otpHelper.detectAndCopyOtp(message, "SMS")
                     
-                    if (stop2End == Stop2EndAction.REPLY_ONLY) {
-                        autoReplyEngine.sendStopReply(sender)
+                    if (stop2End.action == Stop2EndPolicy.Action.REPLY_ONLY) {
+                        autoReplyEngine.sendStopReply(sender, stop2End.reason)
                     }
                 }
                 
@@ -329,50 +331,35 @@ class SmsFilterService : Service() {
         }
     }
     
-    private enum class Stop2EndAction { NONE, REPLY_ONLY, SUPPRESS_AND_REPLY }
-    
     /**
      * Stop2End pipeline: (1) known senders pass, (2) the message needs an opt-out directive and
-     * must not be transactional/notification/OTP, (3) the classifier gate. By default the
-     * classifier must flag the message as promotional/junk, because legitimate senders end real
-     * messages with opt-out text too. If the user turns that setting off, a directive that closes
-     * the message is trusted as a spam signal on its own (suppress, log and reply). A "STOP2END"
-     * elsewhere always needs the classifier, and normal processing is left untouched.
+     * must not contain a code, (3) the spam decision: the classifier if it flagged the message,
+     * otherwise the OpenRouter second opinion if an API key is set. See [Stop2EndPolicy].
      */
-    private suspend fun evaluateStop2End(sender: String, message: String, result: FilterResult): Stop2EndAction {
-        if (!preferencesManager.isAutoReplyStopEnabled()) return Stop2EndAction.NONE
+    private suspend fun evaluateStop2End(sender: String, message: String, result: FilterResult): Stop2EndPolicy.Decision {
+        val none = Stop2EndPolicy.Decision(Stop2EndPolicy.Action.NONE, "")
+        if (!preferencesManager.isAutoReplyStopEnabled()) return none
         
         // 1. Contacts or anyone the user has texted (except numbers we only auto-replied to)
-        if (senderHistoryChecker.isContact(sender)) return Stop2EndAction.NONE
+        if (senderHistoryChecker.isContact(sender)) return none
         val autoRepliedBefore = AutoReplyEngine.normalizeTarget(sender)
             ?.let { database.autoReplyLogDao().getLastReplyAt(it) } != null
-        if (!autoRepliedBefore && senderHistoryChecker.hasOutboundHistory(sender)) return Stop2EndAction.NONE
+        if (!autoRepliedBefore && senderHistoryChecker.hasOutboundHistory(sender)) return none
         
-        // 2. Opt-out directive
-        val directive = Stop2EndDetector.detect(message)
-        if (directive == Stop2EndDetector.Directive.NONE) return Stop2EndAction.NONE
-        
-        // Wanted messages (pharmacy, bank, clinic, codes) carry opt-out text too: never touch them
-        if (result.category == MessageCategory.TRANSACTION ||
-            result.category == MessageCategory.NOTIFICATION ||
-            otpHelper.testOtpDetection(message) != null
-        ) return Stop2EndAction.NONE
-        
-        // 3. Classifier gate
-        val flaggedAsSpam = result.isBlocked ||
-            result.category == MessageCategory.JUNK ||
-            result.category == MessageCategory.PROMOTION
-        return if (directive == Stop2EndDetector.Directive.AT_END) {
-            if (preferencesManager.isAutoReplyRequireSpam() && !flaggedAsSpam) {
-                Stop2EndAction.NONE
-            } else {
-                Stop2EndAction.SUPPRESS_AND_REPLY
-            }
-        } else if (flaggedAsSpam) {
-            Stop2EndAction.REPLY_ONLY
-        } else {
-            Stop2EndAction.NONE
-        }
+        // 2 and 3
+        val apiKey = preferencesManager.getOpenRouterApiKey()
+        return Stop2EndPolicy.decide(
+            directive = Stop2EndDetector.detect(message),
+            category = result.category,
+            flaggedAsSpam = result.isBlocked ||
+                result.category == MessageCategory.JUNK ||
+                result.category == MessageCategory.PROMOTION,
+            hasOtp = otpHelper.testOtpDetection(message) != null,
+            requireSpamClassification = preferencesManager.isAutoReplyRequireSpam(),
+            judge = if (apiKey.isBlank()) null else OpenRouterJudge(apiKey, preferencesManager.getOpenRouterModel()),
+            sender = sender,
+            body = message
+        )
     }
     
     /**

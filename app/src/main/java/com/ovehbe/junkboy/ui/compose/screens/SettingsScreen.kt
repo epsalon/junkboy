@@ -699,6 +699,8 @@ fun SettingsScreen() {
                     )
                 }
                 
+                OpenRouterJudgeItem(preferencesManager)
+                
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -728,11 +730,20 @@ fun SettingsScreen() {
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text(
-                                text = entry.senderNumber,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = DesignColors.Primary
-                            )
+                            Column {
+                                Text(
+                                    text = entry.senderNumber,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = DesignColors.Primary
+                                )
+                                if (entry.reason.isNotEmpty()) {
+                                    Text(
+                                        text = entry.reason,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = DesignColors.Secondary
+                                    )
+                                }
+                            }
                             Text(
                                 text = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
                                     .format(Date(entry.repliedAt)),
@@ -1143,6 +1154,142 @@ fun SettingsScreen() {
                 preferencesManager.clearAllData()
                 showClearDataDialog = false
             }
+        )
+    }
+}
+
+@Composable
+private fun OpenRouterJudgeItem(preferencesManager: PreferencesManager) {
+    val scope = rememberCoroutineScope()
+    var apiKey by remember { mutableStateOf(preferencesManager.getOpenRouterApiKey()) }
+    var model by remember { mutableStateOf(preferencesManager.getOpenRouterModel()) }
+    var testResult by remember { mutableStateOf<String?>(null) }
+    var testing by remember { mutableStateOf(false) }
+    
+    Column(verticalArrangement = Arrangement.spacedBy(DesignSpacing.SM)) {
+        Text(
+            text = "Second opinion (OpenRouter)",
+            style = MaterialTheme.typography.titleSmall,
+            color = DesignColors.Primary
+        )
+        Text(
+            text = "Optional. With an API key, messages that carry an opt-out directive, come from senders you " +
+                "have never texted and weren't already flagged as spam are sent to OpenRouter and the model " +
+                "provider to decide whether they are spam. Links, email addresses and long numbers are removed " +
+                "first; names are not. Leave the key empty to keep everything on this phone.",
+            style = MaterialTheme.typography.bodySmall,
+            color = DesignColors.Secondary
+        )
+        OutlinedTextField(
+            value = apiKey,
+            onValueChange = {
+                apiKey = it
+                preferencesManager.setOpenRouterApiKey(it)
+                testResult = null
+            },
+            label = { Text("OpenRouter API key") },
+            singleLine = true,
+            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth()
+        )
+        OpenRouterModelPicker(model) {
+            model = it
+            preferencesManager.setOpenRouterModel(it)
+            testResult = null
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(DesignSpacing.SM),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(
+                enabled = apiKey.isNotBlank() && !testing,
+                onClick = {
+                    testing = true
+                    scope.launch {
+                        val start = System.currentTimeMillis()
+                        testResult = try {
+                            // Hard-coded sample, so no real message is sent by the test
+                            val verdict = com.ovehbe.junkboy.llm.OpenRouterJudge(apiKey.trim(), preferencesManager.getOpenRouterModel())
+                                .judgeOrThrow("12345", "Chip in $5 to help us flip the Senate before midnight! STOP2END")
+                            "Works: sample fundraising text judged $verdict in ${System.currentTimeMillis() - start} ms"
+                        } catch (e: Exception) {
+                            "Failed: ${e.message}"
+                        }
+                        testing = false
+                    }
+                }
+            ) { Text("Test") }
+            if (testing) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+        }
+        Text(
+            text = testResult ?: if (apiKey.isBlank()) "Off: no API key" else "On",
+            style = MaterialTheme.typography.bodySmall,
+            color = DesignColors.Secondary
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OpenRouterModelPicker(model: String, onModelChange: (String) -> Unit) {
+    var models by remember { mutableStateOf<List<com.ovehbe.junkboy.llm.OpenRouterModel>>(emptyList()) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var expanded by remember { mutableStateOf(false) }
+    
+    LaunchedEffect(Unit) {
+        try {
+            models = com.ovehbe.junkboy.llm.OpenRouterModels.load()
+        } catch (e: Exception) {
+            loadError = "Couldn't load the model list (${e.message})"
+        }
+    }
+    
+    val selected = models.firstOrNull { it.id == model.trim() }
+    
+    Column(verticalArrangement = Arrangement.spacedBy(DesignSpacing.XS)) {
+        ExposedDropdownMenuBox(
+            expanded = expanded && models.isNotEmpty(),
+            onExpandedChange = { expanded = it }
+        ) {
+            OutlinedTextField(
+                value = model,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Model") },
+                singleLine = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                modifier = Modifier.menuAnchor().fillMaxWidth()
+            )
+            ExposedDropdownMenu(
+                expanded = expanded && models.isNotEmpty(),
+                onDismissRequest = { expanded = false }
+            ) {
+                models.forEach { m ->
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(m.name, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "${m.id} · ${m.priceLabel}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = DesignColors.Secondary
+                                )
+                            }
+                        },
+                        onClick = {
+                            expanded = false
+                            onModelChange(m.id)
+                        }
+                    )
+                }
+            }
+        }
+        Text(
+            text = selected?.let {
+                "${it.priceLabel} · about ${com.ovehbe.junkboy.llm.formatMoney(it.costPer1000Messages)} per 1,000 messages"
+            } ?: loadError ?: (if (models.isEmpty()) "Loading models…" else "${models.size} models. Tap the field to choose one"),
+            style = MaterialTheme.typography.bodySmall,
+            color = DesignColors.Secondary
         )
     }
 }

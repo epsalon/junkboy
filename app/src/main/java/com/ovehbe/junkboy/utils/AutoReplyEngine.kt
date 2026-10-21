@@ -69,7 +69,7 @@ class AutoReplyEngine(
     }
 
     /** Returns true if a reply was sent. */
-    suspend fun sendStopReply(senderNumber: String): Boolean {
+    suspend fun sendStopReply(senderNumber: String, reason: String = ""): Boolean {
         // 1. Settings and permission
         if (!isEnabled() || !hasSendPermission()) return false
 
@@ -94,7 +94,7 @@ class AutoReplyEngine(
                 Log.e(TAG, "Failed to send STOP reply to $target", e)
                 return@withLock false
             }
-            dao.insert(AutoReplyLog(senderNumber = target, repliedAt = now, replyText = REPLY_TEXT))
+            dao.insert(AutoReplyLog(senderNumber = target, repliedAt = now, replyText = REPLY_TEXT, reason = reason))
             true
         }
     }
