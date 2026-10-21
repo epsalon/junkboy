@@ -54,6 +54,7 @@ class PreferencesManager(context: Context) {
         
         // Stop2End auto-responder
         private const val KEY_AUTO_REPLY_STOP_ENABLED = "auto_reply_stop_enabled"
+        private const val KEY_AUTO_REPLY_REQUIRE_SPAM = "auto_reply_require_spam"
         
         // Hub configuration
         private const val KEY_HUB_ENABLED = "hub_enabled"
@@ -254,6 +255,10 @@ class PreferencesManager(context: Context) {
     // Stop2End auto-responder (off by default: sends SMS on the user's plan)
     fun isAutoReplyStopEnabled(): Boolean = prefs.getBoolean(KEY_AUTO_REPLY_STOP_ENABLED, false)
     fun setAutoReplyStopEnabled(enabled: Boolean) = prefs.edit().putBoolean(KEY_AUTO_REPLY_STOP_ENABLED, enabled).apply()
+    
+    // When true, the classifier must also flag the message as promotional/junk before replying
+    fun isAutoReplyRequireSpam(): Boolean = prefs.getBoolean(KEY_AUTO_REPLY_REQUIRE_SPAM, false)
+    fun setAutoReplyRequireSpam(enabled: Boolean) = prefs.edit().putBoolean(KEY_AUTO_REPLY_REQUIRE_SPAM, enabled).apply()
     
     // OTP Auto-Copy
     fun isOtpAutoCopyEnabled(): Boolean = prefs.getBoolean(KEY_OTP_AUTO_COPY_ENABLED, true)

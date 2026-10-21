@@ -247,8 +247,10 @@ class SmsFilterService : Service() {
                     }
                 }
                 
-                // Stop2End: marketing "Reply STOP" spam is stored silently and answered with STOP
-                val isStop2End = isStop2EndSpam(sender, message, filterResult)
+                // Stop2End: a closing "Reply STOP" directive marks marketing spam (stored silently);
+                // a "STOP2END" elsewhere only triggers the reply if the message is independently spam
+                val stop2End = evaluateStop2End(sender, message, filterResult)
+                val isStop2End = stop2End == Stop2EndAction.SUPPRESS_AND_REPLY
                 if (isStop2End) {
                     filterResult = filterResult.copy(
                         isBlocked = true,
@@ -286,6 +288,10 @@ class SmsFilterService : Service() {
                     
                     // Detect and copy OTP if present (works regardless of category)
                     otpHelper.detectAndCopyOtp(message, "SMS")
+                    
+                    if (stop2End == Stop2EndAction.REPLY_ONLY) {
+                        autoReplyEngine.sendStopReply(sender)
+                    }
                 }
                 
                 // Auto-delete junk if enabled and app is default SMS app
@@ -319,26 +325,43 @@ class SmsFilterService : Service() {
         }
     }
     
+    private enum class Stop2EndAction { NONE, REPLY_ONLY, SUPPRESS_AND_REPLY }
+    
     /**
-     * Stop2End pipeline: (1) known senders pass, (2) the body must contain an opt-out
-     * directive, (3) the message must already be classified as promotional/junk.
+     * Stop2End pipeline: (1) known senders pass, (2) the message needs an opt-out directive,
+     * (3) the classifier gate. A directive that closes the message is itself a spam signal
+     * (suppress, log and reply; the classifier gate is optional). A "STOP2END" elsewhere is not:
+     * it only triggers the reply when the classifier independently flags the message, and
+     * normal processing is left untouched.
      */
-    private suspend fun isStop2EndSpam(sender: String, message: String, result: FilterResult): Boolean {
-        if (!preferencesManager.isAutoReplyStopEnabled()) return false
+    private suspend fun evaluateStop2End(sender: String, message: String, result: FilterResult): Stop2EndAction {
+        if (!preferencesManager.isAutoReplyStopEnabled()) return Stop2EndAction.NONE
         
         // 1. Contacts or anyone the user has texted (except numbers we only auto-replied to)
-        if (senderHistoryChecker.isContact(sender)) return false
+        if (senderHistoryChecker.isContact(sender)) return Stop2EndAction.NONE
         val autoRepliedBefore = AutoReplyEngine.normalizeTarget(sender)
             ?.let { database.autoReplyLogDao().getLastReplyAt(it) } != null
-        if (!autoRepliedBefore && senderHistoryChecker.hasOutboundHistory(sender)) return false
+        if (!autoRepliedBefore && senderHistoryChecker.hasOutboundHistory(sender)) return Stop2EndAction.NONE
         
         // 2. Opt-out directive
-        if (!Stop2EndDetector.matches(message)) return false
+        val directive = Stop2EndDetector.detect(message)
+        if (directive == Stop2EndDetector.Directive.NONE) return Stop2EndAction.NONE
         
-        // 3. Spam classification
-        return result.isBlocked ||
+        // 3. Classifier gate
+        val flaggedAsSpam = result.isBlocked ||
             result.category == MessageCategory.JUNK ||
             result.category == MessageCategory.PROMOTION
+        return if (directive == Stop2EndDetector.Directive.AT_END) {
+            if (preferencesManager.isAutoReplyRequireSpam() && !flaggedAsSpam) {
+                Stop2EndAction.NONE
+            } else {
+                Stop2EndAction.SUPPRESS_AND_REPLY
+            }
+        } else if (flaggedAsSpam) {
+            Stop2EndAction.REPLY_ONLY
+        } else {
+            Stop2EndAction.NONE
+        }
     }
     
     /**
