@@ -59,6 +59,7 @@ fun SettingsScreen() {
     var autoDeleteStatus by remember { mutableStateOf("") }
     var otpAutoCopy by remember { mutableStateOf(true) }
     var autoReplyStop by remember { mutableStateOf(false) }
+    var autoReplyRequireSpam by remember { mutableStateOf(false) }
     val autoReplyLog by remember { database.autoReplyLogDao().getRecent() }.collectAsState(initial = emptyList())
     val stopPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -126,6 +127,7 @@ fun SettingsScreen() {
         autoDeleteStatus = smsDeleter.getAutoDeleteStatus()
         otpAutoCopy = preferencesManager.isOtpAutoCopyEnabled()
         autoReplyStop = preferencesManager.isAutoReplyStopEnabled()
+        autoReplyRequireSpam = preferencesManager.isAutoReplyRequireSpam()
         hubNotifications = preferencesManager.isHubNotificationsEnabled()
         enabledHubApps = preferencesManager.getEnabledHubApps()
         
@@ -669,15 +671,25 @@ fun SettingsScreen() {
                     }
                 )
                 
+                ToggleSettingItem(
+                    title = "Also require spam classification",
+                    subtitle = "Only reply if the classifier flags the message as promotional or junk",
+                    checked = autoReplyRequireSpam,
+                    onCheckedChange = { enabled ->
+                        autoReplyRequireSpam = enabled
+                        preferencesManager.setAutoReplyRequireSpam(enabled)
+                    }
+                )
+                
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = DesignColors.InputBackground)
                 ) {
                     Text(
                         text = "Enabling this sends an outbound SMS from your carrier plan, which may incur charges. " +
-                            "Replies are only sent to messages classified as promotional or junk that explicitly say " +
-                            "\"Reply STOP\" (or similar), from numbers that are not in your contacts and that you have " +
-                            "never texted. At most one reply per number every 24 hours.",
+                            "Replies are only sent to messages that end with an explicit \"Reply STOP\" (or similar) " +
+                            "directive, from numbers that are not in your contacts and that you have never texted. " +
+                            "At most one reply per number every 24 hours.",
                         style = MaterialTheme.typography.bodySmall,
                         color = DesignColors.Secondary,
                         modifier = Modifier.padding(DesignSpacing.SM)

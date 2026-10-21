@@ -1,6 +1,8 @@
 package com.ovehbe.junkboy
 
 import com.ovehbe.junkboy.filters.Stop2EndDetector
+import com.ovehbe.junkboy.filters.Stop2EndDetector.Directive
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -16,7 +18,9 @@ class Stop2EndDetectorTest {
             "REPLY   STOP",
             "Save 20%! STOP2END",
             "Save 20%! Stop to unsubscribe",
-            "txt STOP 2 cancel"
+            "txt STOP 2 cancel",
+            "Alon, verify your profile.\n\nPLEASE RESPOND >> x.org/a\n\nSTOPtoEND",
+            "Hi! Reply STOP to end.\n"
         )
 
     private val negatives = listOf(
@@ -25,7 +29,8 @@ class Stop2EndDetectorTest {
             "Your code is 123456",
             "Non-stop flights from $99",
             "Stopping by at 5",
-            "Stop"
+            "Stop",
+            "Send end of month report"
         )
 
     private fun stopToEnd(text: String) = text.replace("stop", "end", ignoreCase = true)
@@ -49,5 +54,24 @@ class Stop2EndDetectorTest {
     @Test
     fun ignoresOrdinaryMessagesUsingEnd() {
         negatives.map(::stopToEnd).forEach { assertFalse("should not match: $it", Stop2EndDetector.matches(it)) }
+    }
+
+    @Test
+    fun directiveAtEndOfMessageIsASpamSignal() {
+        assertEquals(Directive.AT_END, Stop2EndDetector.detect("Alon, verify your profile.\n\nSTOPtoEND"))
+        assertEquals(Directive.AT_END, Stop2EndDetector.detect("Big sale! Reply STOP to end."))
+    }
+
+    @Test
+    fun stop2EndElsewhereIsNotASpamSignal() {
+        assertEquals(Directive.ANYWHERE, Stop2EndDetector.detect("STOPtoEND to quit. Visit example.com now"))
+        assertEquals(Directive.ANYWHERE, Stop2EndDetector.detect("Reply STOP to unsubscribe. Visit example.com now"))
+        assertEquals(Directive.ANYWHERE, Stop2EndDetector.detect("The End2End tests passed!"))
+    }
+
+    @Test
+    fun verbFormElsewhereIsIgnored() {
+        assertEquals(Directive.NONE, Stop2EndDetector.detect("Reply STOP. Visit example.com now"))
+        assertEquals(Directive.NONE, Stop2EndDetector.detect("Meet me at the bus stop"))
     }
 }
