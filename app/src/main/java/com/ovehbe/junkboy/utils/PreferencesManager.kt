@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.ovehbe.junkboy.database.MessageCategory
 import com.ovehbe.junkboy.filters.AllowRule
+import com.ovehbe.junkboy.llm.OpenRouterJudge
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
@@ -28,6 +29,10 @@ class PreferencesManager(context: Context) {
         private const val KEY_NOTIFY_NOTIFICATION = "notify_notification"
         private const val KEY_NOTIFY_TRANSACTION = "notify_transaction"
         private const val KEY_NOTIFY_ALLOWED = "notify_allowed"
+        
+        // OpenRouter second opinion (the key lives only in this prefs file, which is excluded from backups)
+        private const val KEY_OPENROUTER_API_KEY = "openrouter_api_key"
+        private const val KEY_OPENROUTER_MODEL = "openrouter_model"
         
         // Content allowlist (words/regexes that bypass all filtering)
         private const val KEY_CONTENT_ALLOW_RULES = "content_allow_rules"
@@ -152,6 +157,14 @@ class PreferencesManager(context: Context) {
         current.remove(keyword)
         setCustomKeywords(current)
     }
+    
+    // OpenRouter second opinion: blank key means the feature is off
+    fun getOpenRouterApiKey(): String = prefs.getString(KEY_OPENROUTER_API_KEY, "").orEmpty()
+    fun setOpenRouterApiKey(key: String) = prefs.edit().putString(KEY_OPENROUTER_API_KEY, key.trim()).apply()
+    
+    fun getOpenRouterModel(): String =
+        prefs.getString(KEY_OPENROUTER_MODEL, null)?.takeIf { it.isNotBlank() } ?: OpenRouterJudge.DEFAULT_MODEL
+    fun setOpenRouterModel(model: String) = prefs.edit().putString(KEY_OPENROUTER_MODEL, model.trim()).apply()
     
     // Content allowlist
     fun getAllowRules(): List<AllowRule> {
