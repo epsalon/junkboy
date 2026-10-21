@@ -11,6 +11,7 @@ import com.ovehbe.junkboy.classifier.SmsClassifier
 import com.ovehbe.junkboy.database.AppDatabase
 import com.ovehbe.junkboy.database.FilteredMessage
 import com.ovehbe.junkboy.database.MessageCategory
+import com.ovehbe.junkboy.filters.ContentAllowlist
 import com.ovehbe.junkboy.filters.CustomFilter
 import com.ovehbe.junkboy.filters.FilterResult
 import com.ovehbe.junkboy.filters.Stop2EndDetector
@@ -94,9 +95,11 @@ class SmsFilterService : Service() {
                 
                 // Check if sender is in allowed list - if so, don't filter
                 // Use flexible matching: case-insensitive for text senders, and normalized for phone numbers
-                val isAllowed = isAllowedSenderFlexible(sender)
-                if (isAllowed) {
-                    Log.d(TAG, "Sender $sender is in allowed list, skipping filtering")
+                val allowedBySender = isAllowedSenderFlexible(sender)
+                val allowRule = if (allowedBySender) null else ContentAllowlist.firstMatch(preferencesManager.getAllowRules(), message)
+                if (allowedBySender || allowRule != null) {
+                    Log.d(TAG, if (allowedBySender) "Sender $sender is in allowed list, skipping filtering"
+                        else "Message from $sender matches allow rule '${allowRule?.pattern}', skipping filtering")
                     
                     // Create record but don't block - use ALLOWED category
                     val filteredMessage = FilteredMessage(
@@ -105,7 +108,8 @@ class SmsFilterService : Service() {
                         receivedAt = Date(timestamp),
                         category = MessageCategory.ALLOWED,
                         confidence = 1.0f,
-                        filterType = com.ovehbe.junkboy.database.FilterType.ALLOWED_SENDER,
+                        filterType = if (allowedBySender) com.ovehbe.junkboy.database.FilterType.ALLOWED_SENDER
+                            else com.ovehbe.junkboy.database.FilterType.ALLOWED_CONTENT,
                         isBlocked = false,
                         isUserOverride = true, // Mark as user override since it's manually allowed
                         isRead = false
@@ -118,7 +122,7 @@ class SmsFilterService : Service() {
                     // They should bypass filtering but still show notifications
                     notificationHelper.showSmsNotification(
                         filteredMessage.copy(id = messageId),
-                        "allowed_sender"
+                        if (allowedBySender) "allowed_sender" else "allowed_content"
                     )
                     
                     // Detect and copy OTP if present (works for allow-listed senders too)

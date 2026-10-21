@@ -103,6 +103,8 @@ fun SettingsScreen() {
     
     var customKeywords by remember { mutableStateOf<List<String>>(emptyList()) }
     var customRegexPatterns by remember { mutableStateOf<List<String>>(emptyList()) }
+    var allowRules by remember { mutableStateOf<List<com.ovehbe.junkboy.filters.AllowRule>>(emptyList()) }
+    var showAddAllowRuleDialog by remember { mutableStateOf(false) }
     var allowedSenders by remember { mutableStateOf<List<com.ovehbe.junkboy.database.AllowedSender>>(emptyList()) }
     
     var showAddKeywordDialog by remember { mutableStateOf(false) }
@@ -158,6 +160,7 @@ fun SettingsScreen() {
         
         customKeywords = preferencesManager.getCustomKeywords()
         customRegexPatterns = preferencesManager.getCustomRegexPatterns()
+        allowRules = preferencesManager.getAllowRules()
         
         // Load allowed senders
         database.allowedSenderDao().getAllowedSenders().collect { senders ->
@@ -917,6 +920,39 @@ fun SettingsScreen() {
             }
         }
         
+        // Allowed Content Section
+        item {
+            SettingsSection(
+                title = "Allowed Content",
+                icon = Icons.Default.CheckCircle
+            ) {
+                Text(
+                    text = "Messages containing these words or matching these patterns skip all filtering, " +
+                        "including Stop2End. Useful for senders that look like spam but aren't.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = DesignColors.Secondary
+                )
+                
+                ActionSettingItem(
+                    title = "Add Rule",
+                    subtitle = "Allow a word, phrase or regex",
+                    icon = Icons.Default.Add,
+                    onClick = { showAddAllowRuleDialog = true }
+                )
+                
+                allowRules.forEach { rule ->
+                    RegexPatternItem(
+                        pattern = if (rule.isRegex) "/${rule.pattern}/" else rule.pattern,
+                        onRemove = {
+                            val newRules = allowRules - rule
+                            allowRules = newRules
+                            preferencesManager.setAllowRules(newRules)
+                        }
+                    )
+                }
+            }
+        }
+        
         // Allowed Senders Section
         item {
             SettingsSection(
@@ -1038,6 +1074,20 @@ fun SettingsScreen() {
                 customKeywords = newKeywords
                 preferencesManager.setCustomKeywords(newKeywords)
                 showAddKeywordDialog = false
+            }
+        )
+    }
+    
+    if (showAddAllowRuleDialog) {
+        AddAllowRuleDialog(
+            onDismiss = { showAddAllowRuleDialog = false },
+            onAdd = { rule ->
+                if (rule !in allowRules) {
+                    val newRules = allowRules + rule
+                    allowRules = newRules
+                    preferencesManager.setAllowRules(newRules)
+                }
+                showAddAllowRuleDialog = false
             }
         )
     }
@@ -1458,6 +1508,57 @@ private fun AddKeywordDialog(
         confirmButton = {
             TextButton(
                 onClick = { if (keyword.isNotBlank()) onAdd(keyword) }
+            ) {
+                Text("Add")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun AddAllowRuleDialog(
+    onDismiss: () -> Unit,
+    onAdd: (com.ovehbe.junkboy.filters.AllowRule) -> Unit
+) {
+    var pattern by remember { mutableStateOf("") }
+    var isRegex by remember { mutableStateOf(false) }
+    val rule = com.ovehbe.junkboy.filters.AllowRule(pattern.trim(), isRegex)
+    val error = if (pattern.isBlank()) null else com.ovehbe.junkboy.filters.ContentAllowlist.validate(rule)
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Allow Rule") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(DesignSpacing.SM)) {
+                OutlinedTextField(
+                    value = pattern,
+                    onValueChange = { pattern = it },
+                    label = { Text(if (isRegex) "Regex" else "Word or phrase") },
+                    isError = error != null,
+                    supportingText = { if (error != null) Text(error) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = isRegex, onCheckedChange = { isRegex = it })
+                    Text("Regular expression")
+                }
+                Text(
+                    text = if (isRegex) "Matched anywhere in the message, ignoring case."
+                    else "Matched as a whole word or phrase, ignoring case.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = DesignColors.Secondary
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = pattern.isNotBlank() && error == null,
+                onClick = { onAdd(rule) }
             ) {
                 Text("Add")
             }
