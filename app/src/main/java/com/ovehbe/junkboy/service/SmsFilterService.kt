@@ -16,7 +16,7 @@ import com.ovehbe.junkboy.filters.CustomFilter
 import com.ovehbe.junkboy.filters.FilterResult
 import com.ovehbe.junkboy.filters.Stop2EndDetector
 import com.ovehbe.junkboy.filters.Stop2EndPolicy
-import com.ovehbe.junkboy.llm.OpenRouterJudge
+import com.ovehbe.junkboy.llm.OpenRouterJudges
 import com.ovehbe.junkboy.utils.AutoReplyEngine
 import com.ovehbe.junkboy.utils.SenderHistoryChecker
 import com.ovehbe.junkboy.utils.PreferencesManager
@@ -356,7 +356,12 @@ class SmsFilterService : Service() {
                 result.category == MessageCategory.PROMOTION,
             hasOtp = otpHelper.testOtpDetection(message) != null,
             requireSpamClassification = preferencesManager.isAutoReplyRequireSpam(),
-            judge = if (apiKey.isBlank()) null else OpenRouterJudge(apiKey, preferencesManager.getOpenRouterModel()),
+            judge = if (apiKey.isBlank()) null else OpenRouterJudges.create(
+                apiKey,
+                preferencesManager.getOpenRouterModel(),
+                preferencesManager.getOpenRouterModelKind(),
+                preferencesManager.getDecisionCut().toDouble()
+            ),
             sender = sender,
             body = message
         )

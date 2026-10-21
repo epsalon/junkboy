@@ -9,24 +9,42 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
 
-/** A text-in, text-out model from OpenRouter's public catalog, with prices in dollars per million tokens. */
+/** CHAT models write text; DECISION models return a probability per yes/no question (alpha Decisions API). */
+enum class ModelKind(val stored: String, val label: String) {
+    CHAT("chat", "Chat"),
+    DECISION("decision", "Decision");
+
+    companion object {
+        fun fromStored(value: String?): ModelKind? = entries.firstOrNull { it.stored == value }
+    }
+}
+
+/** A model from OpenRouter's public catalog, with prices in dollars per million tokens. */
 data class OpenRouterModel(
     val id: String,
     val name: String,
     val inputPerMillion: Double,
-    val outputPerMillion: Double
+    val outputPerMillion: Double,
+    val kind: ModelKind = ModelKind.CHAT
 ) {
-    /** One judge call is roughly 300 tokens in (instructions plus message) and a few tokens out. */
+    /** Measured on real messages: about 480 tokens in and 6 out for a chat judge, about 490 in for a decision judge. */
     val costPer1000Messages: Double
-        get() = 1000 * (JUDGE_INPUT_TOKENS * inputPerMillion + JUDGE_OUTPUT_TOKENS * outputPerMillion) / 1_000_000
+        get() = when (kind) {
+            ModelKind.CHAT -> 1000 * (CHAT_INPUT_TOKENS * inputPerMillion + CHAT_OUTPUT_TOKENS * outputPerMillion) / 1_000_000
+            ModelKind.DECISION -> 1000 * DECISION_INPUT_TOKENS * inputPerMillion / 1_000_000
+        }
 
     val priceLabel: String
-        get() = if (inputPerMillion == 0.0 && outputPerMillion == 0.0) "free"
-        else "${formatMoney(inputPerMillion)} in / ${formatMoney(outputPerMillion)} out per M tokens"
+        get() = when {
+            inputPerMillion == 0.0 && outputPerMillion == 0.0 -> "free"
+            kind == ModelKind.DECISION -> "${formatMoney(inputPerMillion)} per M input tokens"
+            else -> "${formatMoney(inputPerMillion)} in / ${formatMoney(outputPerMillion)} out per M tokens"
+        }
 
     companion object {
-        private const val JUDGE_INPUT_TOKENS = 300
-        private const val JUDGE_OUTPUT_TOKENS = 5
+        private const val CHAT_INPUT_TOKENS = 480
+        private const val CHAT_OUTPUT_TOKENS = 6
+        private const val DECISION_INPUT_TOKENS = 490
     }
 }
 
@@ -38,7 +56,11 @@ fun formatMoney(dollars: Double): String {
 
 object OpenRouterModels {
 
-    private const val ENDPOINT = "https://openrouter.ai/api/v1/models"
+    // "all" so that decision models, which return scores instead of text, are included
+    private const val ENDPOINT = "https://openrouter.ai/api/v1/models?output_modalities=all"
+
+    const val DEFAULT_MODEL = "respan/span-02"
+    val DEFAULT_KIND = ModelKind.DECISION
 
     @Volatile
     private var cached: List<OpenRouterModel>? = null
@@ -59,8 +81,8 @@ object OpenRouterModels {
     }
 
     /**
-     * Keeps models that take text and return only text, and have a fixed price. Router entries with
-     * a negative ("varies") price are dropped. Sorted by id.
+     * Keeps models that take text and either return only text (chat) or only decisions, and have a fixed
+     * price. Router entries with a negative ("varies") price are dropped. Sorted by id.
      */
     fun parse(json: String): List<OpenRouterModel> {
         val data = JsonParser.parseString(json).asJsonObject.getAsJsonArray("data") ?: return emptyList()
@@ -74,10 +96,15 @@ object OpenRouterModels {
 
             val architecture = model.getAsJsonObject("architecture")
             val takesText = architecture?.getAsJsonArray("input_modalities")?.any { it.asString == "text" } ?: false
-            val onlyText = architecture?.getAsJsonArray("output_modalities")?.map { it.asString } == listOf("text")
-            if (!takesText || !onlyText) return@mapNotNull null
+            val outputs = architecture?.getAsJsonArray("output_modalities")?.map { it.asString }
+            val kind = when (outputs) {
+                listOf("text") -> ModelKind.CHAT
+                listOf("decisions") -> ModelKind.DECISION
+                else -> return@mapNotNull null
+            }
+            if (!takesText) return@mapNotNull null
 
-            OpenRouterModel(id, model.get("name")?.asString ?: id, input, output)
+            OpenRouterModel(id, model.get("name")?.asString ?: id, input, output, kind)
         }.sortedBy { it.id }
     }
 

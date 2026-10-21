@@ -7,21 +7,15 @@ import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 
-/** Asks a model on OpenRouter (https://openrouter.ai) for a [SpamVerdict]. Messages are redacted first. */
+/** Asks a chat model on OpenRouter (https://openrouter.ai) for a [SpamVerdict]. Messages are redacted first. */
 class OpenRouterJudge(
     private val apiKey: String,
-    private val model: String = DEFAULT_MODEL
-) : SpamJudge {
+    private val model: String
+) : DetailedSpamJudge {
 
     companion object {
         private const val TAG = "OpenRouterJudge"
-        const val DEFAULT_MODEL = "anthropic/claude-haiku-5.5"
-        private const val ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
-        private const val CONNECT_TIMEOUT_MS = 5_000
-        private const val READ_TIMEOUT_MS = 8_000
 
         internal const val SYSTEM_PROMPT =
             "You judge text messages (SMS) received by one person from senders they have never texted. " +
@@ -42,14 +36,13 @@ class OpenRouterJudge(
 
     override suspend fun judge(sender: String, body: String): SpamVerdict =
         try {
-            judgeOrThrow(sender, body)
+            judgeOrThrow(sender, body).verdict
         } catch (e: Exception) {
             Log.w(TAG, "Judge failed, treating as UNSURE: ${e.message}")
             SpamVerdict.UNSURE
         }
 
-    /** Like [judge] but reports failures, so the settings screen can show what went wrong. */
-    suspend fun judgeOrThrow(sender: String, body: String): SpamVerdict = withContext(Dispatchers.IO) {
+    override suspend fun judgeOrThrow(sender: String, body: String): JudgeResult = withContext(Dispatchers.IO) {
         val messages = JsonArray().apply {
             add(JsonObject().apply { addProperty("role", "system"); addProperty("content", SYSTEM_PROMPT) })
             add(JsonObject().apply {
@@ -66,28 +59,8 @@ class OpenRouterJudge(
             addProperty("max_tokens", 10)
             add("messages", messages)
         }
-
-        val connection = URL(ENDPOINT).openConnection() as HttpURLConnection
-        try {
-            connection.requestMethod = "POST"
-            connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = READ_TIMEOUT_MS
-            connection.doOutput = true
-            connection.setRequestProperty("Authorization", "Bearer $apiKey")
-            connection.setRequestProperty("Content-Type", "application/json")
-            connection.setRequestProperty("X-Title", "Junkboy")
-            connection.outputStream.use { it.write(request.toString().toByteArray()) }
-
-            val code = connection.responseCode
-            if (code !in 200..299) {
-                val detail = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
-                throw IOException("HTTP $code ${errorMessage(detail)}".trim())
-            }
-            val reply = connection.inputStream.bufferedReader().use { it.readText() }
-            parseVerdict(extractContent(reply))
-        } finally {
-            connection.disconnect()
-        }
+        val reply = OpenRouterHttp.post("/api/v1/chat/completions", apiKey, request)
+        JudgeResult(parseVerdict(extractContent(reply)))
     }
 
     private fun extractContent(json: String): String =
@@ -95,11 +68,4 @@ class OpenRouterJudge(
             .getAsJsonArray("choices")?.firstOrNull()?.asJsonObject
             ?.getAsJsonObject("message")?.get("content")?.takeIf { !it.isJsonNull }?.asString
             ?: throw IOException("Reply had no content")
-
-    private fun errorMessage(json: String): String =
-        try {
-            JsonParser.parseString(json).asJsonObject.getAsJsonObject("error")?.get("message")?.asString.orEmpty()
-        } catch (e: Exception) {
-            ""
-        }
 }
