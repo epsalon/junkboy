@@ -328,11 +328,12 @@ class SmsFilterService : Service() {
     private enum class Stop2EndAction { NONE, REPLY_ONLY, SUPPRESS_AND_REPLY }
     
     /**
-     * Stop2End pipeline: (1) known senders pass, (2) the message needs an opt-out directive,
-     * (3) the classifier gate. A directive that closes the message is itself a spam signal
-     * (suppress, log and reply; the classifier gate is optional). A "STOP2END" elsewhere is not:
-     * it only triggers the reply when the classifier independently flags the message, and
-     * normal processing is left untouched.
+     * Stop2End pipeline: (1) known senders pass, (2) the message needs an opt-out directive and
+     * must not be transactional/notification/OTP, (3) the classifier gate. By default the
+     * classifier must flag the message as promotional/junk, because legitimate senders end real
+     * messages with opt-out text too. If the user turns that setting off, a directive that closes
+     * the message is trusted as a spam signal on its own (suppress, log and reply). A "STOP2END"
+     * elsewhere always needs the classifier, and normal processing is left untouched.
      */
     private suspend fun evaluateStop2End(sender: String, message: String, result: FilterResult): Stop2EndAction {
         if (!preferencesManager.isAutoReplyStopEnabled()) return Stop2EndAction.NONE
@@ -346,6 +347,12 @@ class SmsFilterService : Service() {
         // 2. Opt-out directive
         val directive = Stop2EndDetector.detect(message)
         if (directive == Stop2EndDetector.Directive.NONE) return Stop2EndAction.NONE
+        
+        // Wanted messages (pharmacy, bank, clinic, codes) carry opt-out text too: never touch them
+        if (result.category == MessageCategory.TRANSACTION ||
+            result.category == MessageCategory.NOTIFICATION ||
+            otpHelper.testOtpDetection(message) != null
+        ) return Stop2EndAction.NONE
         
         // 3. Classifier gate
         val flaggedAsSpam = result.isBlocked ||
