@@ -59,7 +59,7 @@ fun SettingsScreen() {
     var autoDeleteStatus by remember { mutableStateOf("") }
     var otpAutoCopy by remember { mutableStateOf(true) }
     var autoReplyStop by remember { mutableStateOf(false) }
-    var autoReplyRequireSpam by remember { mutableStateOf(false) }
+    var autoReplyRequireSpam by remember { mutableStateOf(true) }
     val autoReplyLog by remember { database.autoReplyLogDao().getRecent() }.collectAsState(initial = emptyList())
     val stopPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -673,7 +673,7 @@ fun SettingsScreen() {
                 
                 ToggleSettingItem(
                     title = "Also require spam classification",
-                    subtitle = "Only reply if the classifier flags the message as promotional or junk",
+                    subtitle = "Recommended. Pharmacies, banks and clinics also add opt-out text to real messages",
                     checked = autoReplyRequireSpam,
                     onCheckedChange = { enabled ->
                         autoReplyRequireSpam = enabled
