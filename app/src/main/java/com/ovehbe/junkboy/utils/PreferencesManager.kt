@@ -3,6 +3,7 @@ package com.ovehbe.junkboy.utils
 import android.content.Context
 import android.content.SharedPreferences
 import com.ovehbe.junkboy.database.MessageCategory
+import com.ovehbe.junkboy.filters.AllowRule
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
@@ -27,6 +28,9 @@ class PreferencesManager(context: Context) {
         private const val KEY_NOTIFY_NOTIFICATION = "notify_notification"
         private const val KEY_NOTIFY_TRANSACTION = "notify_transaction"
         private const val KEY_NOTIFY_ALLOWED = "notify_allowed"
+        
+        // Content allowlist (words/regexes that bypass all filtering)
+        private const val KEY_CONTENT_ALLOW_RULES = "content_allow_rules"
         
         // Custom filters
         private const val KEY_CUSTOM_KEYWORDS = "custom_keywords"
@@ -147,6 +151,17 @@ class PreferencesManager(context: Context) {
         val current = getCustomKeywords().toMutableList()
         current.remove(keyword)
         setCustomKeywords(current)
+    }
+    
+    // Content allowlist
+    fun getAllowRules(): List<AllowRule> {
+        val json = prefs.getString(KEY_CONTENT_ALLOW_RULES, "[]")
+        val type = object : TypeToken<List<AllowRule>>() {}.type
+        return gson.fromJson<List<AllowRule>?>(json, type) ?: emptyList()
+    }
+    
+    fun setAllowRules(rules: List<AllowRule>) {
+        prefs.edit().putString(KEY_CONTENT_ALLOW_RULES, gson.toJson(rules)).apply()
     }
     
     fun getCustomRegexPatterns(): List<String> {
