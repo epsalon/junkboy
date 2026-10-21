@@ -4,7 +4,9 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.ovehbe.junkboy.database.MessageCategory
 import com.ovehbe.junkboy.filters.AllowRule
-import com.ovehbe.junkboy.llm.OpenRouterJudge
+import com.ovehbe.junkboy.llm.ModelKind
+import com.ovehbe.junkboy.llm.OpenRouterDecisionsJudge
+import com.ovehbe.junkboy.llm.OpenRouterJudges
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
@@ -33,6 +35,8 @@ class PreferencesManager(context: Context) {
         // OpenRouter second opinion (the key lives only in this prefs file, which is excluded from backups)
         private const val KEY_OPENROUTER_API_KEY = "openrouter_api_key"
         private const val KEY_OPENROUTER_MODEL = "openrouter_model"
+        private const val KEY_OPENROUTER_MODEL_KIND = "openrouter_model_kind"
+        private const val KEY_DECISION_CUT = "openrouter_decision_cut"
         
         // Content allowlist (words/regexes that bypass all filtering)
         private const val KEY_CONTENT_ALLOW_RULES = "content_allow_rules"
@@ -162,9 +166,20 @@ class PreferencesManager(context: Context) {
     fun getOpenRouterApiKey(): String = prefs.getString(KEY_OPENROUTER_API_KEY, "").orEmpty()
     fun setOpenRouterApiKey(key: String) = prefs.edit().putString(KEY_OPENROUTER_API_KEY, key.trim()).apply()
     
-    fun getOpenRouterModel(): String =
-        prefs.getString(KEY_OPENROUTER_MODEL, null)?.takeIf { it.isNotBlank() } ?: OpenRouterJudge.DEFAULT_MODEL
-    fun setOpenRouterModel(model: String) = prefs.edit().putString(KEY_OPENROUTER_MODEL, model.trim()).apply()
+    private fun resolvedOpenRouterModel() = OpenRouterJudges.resolve(
+        prefs.getString(KEY_OPENROUTER_MODEL, null),
+        prefs.getString(KEY_OPENROUTER_MODEL_KIND, null)
+    )
+    fun getOpenRouterModel(): String = resolvedOpenRouterModel().first
+    fun getOpenRouterModelKind(): ModelKind = resolvedOpenRouterModel().second
+    fun setOpenRouterModel(model: String, kind: ModelKind) = prefs.edit()
+        .putString(KEY_OPENROUTER_MODEL, model.trim())
+        .putString(KEY_OPENROUTER_MODEL_KIND, kind.stored)
+        .apply()
+    
+    // How far the spam score must exceed the wanted score for a decision model to call a text spam
+    fun getDecisionCut(): Float = prefs.getFloat(KEY_DECISION_CUT, OpenRouterDecisionsJudge.DEFAULT_CUT.toFloat())
+    fun setDecisionCut(cut: Float) = prefs.edit().putFloat(KEY_DECISION_CUT, cut).apply()
     
     // Content allowlist
     fun getAllowRules(): List<AllowRule> {

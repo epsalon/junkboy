@@ -1163,6 +1163,8 @@ private fun OpenRouterJudgeItem(preferencesManager: PreferencesManager) {
     val scope = rememberCoroutineScope()
     var apiKey by remember { mutableStateOf(preferencesManager.getOpenRouterApiKey()) }
     var model by remember { mutableStateOf(preferencesManager.getOpenRouterModel()) }
+    var kind by remember { mutableStateOf(preferencesManager.getOpenRouterModelKind()) }
+    var cut by remember { mutableFloatStateOf(preferencesManager.getDecisionCut()) }
     var testResult by remember { mutableStateOf<String?>(null) }
     var testing by remember { mutableStateOf(false) }
     
@@ -1192,10 +1194,31 @@ private fun OpenRouterJudgeItem(preferencesManager: PreferencesManager) {
             visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth()
         )
-        OpenRouterModelPicker(model) {
-            model = it
-            preferencesManager.setOpenRouterModel(it)
+        OpenRouterModelPicker(model, kind) { picked ->
+            model = picked.id
+            kind = picked.kind
+            preferencesManager.setOpenRouterModel(picked.id, picked.kind)
             testResult = null
+        }
+        if (kind == com.ovehbe.junkboy.llm.ModelKind.DECISION) {
+            Text(
+                text = "Spam cut-off: ${String.format(java.util.Locale.US, "%.2f", cut)}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = DesignColors.Primary
+            )
+            Slider(
+                value = cut,
+                onValueChange = { cut = it; testResult = null },
+                onValueChangeFinished = { preferencesManager.setDecisionCut(cut) },
+                valueRange = 0.3f..0.95f
+            )
+            Text(
+                text = "Decision models score each message. A text counts as spam when its spam score beats its " +
+                    "wanted score by at least this much. Higher is more cautious: fewer wanted texts are blocked, " +
+                    "but more spam gets through. 0.70 worked well in testing.",
+                style = MaterialTheme.typography.bodySmall,
+                color = DesignColors.Secondary
+            )
         }
         Row(
             horizontalArrangement = Arrangement.spacedBy(DesignSpacing.SM),
@@ -1209,9 +1232,11 @@ private fun OpenRouterJudgeItem(preferencesManager: PreferencesManager) {
                         val start = System.currentTimeMillis()
                         testResult = try {
                             // Hard-coded sample, so no real message is sent by the test
-                            val verdict = com.ovehbe.junkboy.llm.OpenRouterJudge(apiKey.trim(), preferencesManager.getOpenRouterModel())
+                            val result = com.ovehbe.junkboy.llm.OpenRouterJudges
+                                .create(apiKey.trim(), model, kind, cut.toDouble())
                                 .judgeOrThrow("12345", "Chip in $5 to help us flip the Senate before midnight! STOP2END")
-                            "Works: sample fundraising text judged $verdict in ${System.currentTimeMillis() - start} ms"
+                            val detail = if (result.detail.isNotEmpty()) " (${result.detail})" else ""
+                            "Works: sample fundraising text judged ${result.verdict}$detail in ${System.currentTimeMillis() - start} ms"
                         } catch (e: Exception) {
                             "Failed: ${e.message}"
                         }
@@ -1231,20 +1256,26 @@ private fun OpenRouterJudgeItem(preferencesManager: PreferencesManager) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun OpenRouterModelPicker(model: String, onModelChange: (String) -> Unit) {
+private fun OpenRouterModelPicker(
+    model: String,
+    kind: com.ovehbe.junkboy.llm.ModelKind,
+    onPick: (com.ovehbe.junkboy.llm.OpenRouterModel) -> Unit
+) {
     var models by remember { mutableStateOf<List<com.ovehbe.junkboy.llm.OpenRouterModel>>(emptyList()) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var expanded by remember { mutableStateOf(false) }
     
     LaunchedEffect(Unit) {
         try {
+            // Decision models first (a short list), then chat models, each sorted by id
             models = com.ovehbe.junkboy.llm.OpenRouterModels.load()
+                .sortedWith(compareBy({ it.kind != com.ovehbe.junkboy.llm.ModelKind.DECISION }, { it.id }))
         } catch (e: Exception) {
             loadError = "Couldn't load the model list (${e.message})"
         }
     }
     
-    val selected = models.firstOrNull { it.id == model.trim() }
+    val selected = models.firstOrNull { it.id == model }
     
     Column(verticalArrangement = Arrangement.spacedBy(DesignSpacing.XS)) {
         ExposedDropdownMenuBox(
@@ -1255,7 +1286,7 @@ private fun OpenRouterModelPicker(model: String, onModelChange: (String) -> Unit
                 value = model,
                 onValueChange = {},
                 readOnly = true,
-                label = { Text("Model") },
+                label = { Text("Model (${kind.label.lowercase()})") },
                 singleLine = true,
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                 modifier = Modifier.menuAnchor().fillMaxWidth()
@@ -1270,7 +1301,7 @@ private fun OpenRouterModelPicker(model: String, onModelChange: (String) -> Unit
                             Column {
                                 Text(m.name, style = MaterialTheme.typography.bodyMedium)
                                 Text(
-                                    "${m.id} · ${m.priceLabel}",
+                                    "${m.kind.label} · ${m.id} · ${m.priceLabel}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = DesignColors.Secondary
                                 )
@@ -1278,7 +1309,7 @@ private fun OpenRouterModelPicker(model: String, onModelChange: (String) -> Unit
                         },
                         onClick = {
                             expanded = false
-                            onModelChange(m.id)
+                            onPick(m)
                         }
                     )
                 }
@@ -1286,8 +1317,9 @@ private fun OpenRouterModelPicker(model: String, onModelChange: (String) -> Unit
         }
         Text(
             text = selected?.let {
-                "${it.priceLabel} · about ${com.ovehbe.junkboy.llm.formatMoney(it.costPer1000Messages)} per 1,000 messages"
-            } ?: loadError ?: (if (models.isEmpty()) "Loading models…" else "${models.size} models. Tap the field to choose one"),
+                "${it.kind.label} model · ${it.priceLabel} · about ${com.ovehbe.junkboy.llm.formatMoney(it.costPer1000Messages)} per 1,000 messages"
+            } ?: loadError ?: (if (models.isEmpty()) "Loading models…"
+            else "${models.size} models, decision and chat. Tap the field to choose one"),
             style = MaterialTheme.typography.bodySmall,
             color = DesignColors.Secondary
         )

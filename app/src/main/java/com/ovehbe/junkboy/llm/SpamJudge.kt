@@ -8,6 +8,15 @@ interface SpamJudge {
     suspend fun judge(sender: String, body: String): SpamVerdict
 }
 
+/** A verdict plus a short human-readable detail (for example the score), for the settings test. */
+data class JudgeResult(val verdict: SpamVerdict, val detail: String = "")
+
+/** A judge that can also report failures, so the settings screen can show what went wrong. */
+interface DetailedSpamJudge : SpamJudge {
+    @Throws(java.io.IOException::class)
+    suspend fun judgeOrThrow(sender: String, body: String): JudgeResult
+}
+
 /** Reads the first verdict word in a model reply; anything unrecognizable is UNSURE. */
 fun parseVerdict(reply: String): SpamVerdict {
     val upper = reply.uppercase()
